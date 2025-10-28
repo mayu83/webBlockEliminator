@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Block Eliminator</title>
+    <script src="./js/pixi-4.8.2.js"></script>
+    <script src="./js/pixi-filters-v2.7.1.js"></script>
+    <script src="./js/dust.js"></script>
+    <script src="./js/sound.js"></script>
+    <script>
+        function LoopTimer(callback, sleepMS, durationMS, endcall){
+            let _cnt = Math.floor(durationMS/sleepMS);
+            let _tm = setInterval(function(){
+                if( _cnt <= 0 ){
+                    clearInterval(_tm);
+                    if(typeof(endcall)=='function'){
+                        endcall()
+                    }
+                }
+                callback();
+                _cnt--;
+            }, sleepMS);
+        }
+    </script>
+    <style>
+        body{
+            background-color: black;
+        }
+    </style>
+</head>
+<body>
+    <div id="boxMain" style="margin-left: auto; margin-right:auto;text-align: center;"></div>
+    <div style="text-align: center;font-size: 36px;line-height: 40px;"><button onclick="initGame()" style="font-size: 36px;">Restart Game</button></div>
+</body>
+</html>
+
+<script>
+
+    let jsonFile = './img/usefulwords.json'
+    let starFile = './img/star.png'
+    let mp3File = './sound/chime.mp3'
+
+    let type = "Canvas";
+    PIXI.utils.sayHello(type);
+    let app = new PIXI.Application({width:800, height:860});
+
+    PIXI.loader
+        .add(jsonFile)
+        .add(starFile)
+        .load(setup)
+
+    document.getElementById('boxMain').appendChild(app.view);
+
+    let TC = PIXI.utils.TextureCache;
+
+    let d = new Dust(PIXI);
+
+    function isTouchDevice(){
+        return 'ontouchstart' in document.documentElement;
+    }
+
+    function StructWord(text, width, height, filename){
+        this.text = text;
+        this.width = width;
+        this.height = height;
+        this.filename = filename;
+        return this;
+    }
+
+
+    function StructSprite(type, index){
+        this.type = type;
+        this.index = index;
+        return this;
+    }
+
+    // const
+    let Conf = {
+
+        GridTotalWidth : 800,
+        GridTotalHeight : 800,
+        GridRow : 8,
+        GridColumn : 8,
+        GridPadding : 4,
+
+    }
+
+    let Global = {
+
+        TypeImg : 1,
+        TypeTxt : 2,
+
+        CharHeight : 0,
+        CharWeight : 0,
+
+        words:[],
+        arrWord:[],
+        
+        arrGrid:[],
+
+        arrConteiner:[],
+
+        styleText : (new PIXI.TextStyle({
+            breakWords: true,
+            wordWrap : true,
+            fontSize: 18,
+            fontFamily: 'Aria1',
+            align: 'center',
+            fill: '#000000'
+        })),
+        filterLine : (new PIXI.filters.OutlineFilter(2, 0x99ff99)),
+        filterLineErr : (new PIXI.filters.OutlineFilter(2, 0x990000)),
+
+        flagWordWrapWidth : false,
+
+    }
+
+    sounds.load([
+        mp3File
+    ])
+
+    let FlagSound = false;
+
+    sounds.whenLoaded = function(){
+        FlagSound = true;
+    }
+
+    function setup(){
+        fetch(jsonFile)
+        .then(
+            response => {
+                if(!response.ok){
+                    throw new Error('not ok')
+                }
+                return response.json()
+            }
+        ).then(
+            data => {
+
+                dataAll = data;
+
+                var arr = data.frames.valueOf()
+                for(let key in arr){
+                    Global.words.push(
+                        new StructWord(
+                            key.slice(0, -4), 
+                            arr[key].frame.w,
+                            arr[key].frame.h, 
+                            key
+                        )
+                    )
+                }
+
+                InitEnv();
+                InitGrid();
+                initGame();
+
+            }
+        ).catch(error=>{
+            console.log(error)
+        })
+    }
+
+    /**
+     * Set WordWrapWidth
+     * */
+    function SetWordWrapWidth(w){
+        if( !Global.flagWordWrapWidth ){
+            Global.styleText.wordWrapWidth = w;
+            Global.flagWordWrapWidth = true;
+        }
+    }
+
+    /**
+     * InitEnv
+     * */
+    function InitEnv(){
+        let t = new PIXI.Text('A', Global.styleText)
+        Global.CharWeight = t.width;
+        Global.CharHeight = t.height;
+    }
+
+    /** 
+     * Init Grid only onetime
+     **/
+    function InitGrid(){
+
+        let gridW = Math.floor( Conf.GridTotalWidth / Conf.GridColumn)
+        let gridH = Math.floor( Conf.GridTotalHeight / Conf.GridRow)
+
+        let w = gridW - Conf.GridPadding * 2 ;
+        let h = gridH - Conf.GridPadding * 2 ;
+
+        for(var m=0; m < Conf.GridRow; m++){
+            for(var n=0; n < Conf.GridColumn; n++){
+                
+                let rr = new PIXI.Graphics();
+                rr.beginFill(0x244444) 
+                rr.drawRoundedRect(0, 0, w, h, 8)
+                rr.endFill()
+                rr.x = gridW * n + Conf.GridPadding;
+                rr.y = gridH * m + Conf.GridPadding;
+                Global.arrGrid.push(rr);
+                app.stage.addChild(rr);
+            }
+        }
+
+    }
+
+    function ClearState(){
+        Global.arrWord = [];
+        Global.arrSelect = [];
+        for(var i=0; i<Global.arrConteiner.length; i++){
+            app.stage.removeChild(Global.arrConteiner[i])
+        }
+        Global.arrConteiner = [];
+    }
+
+    function initGame(){
+
+        // clear
+        ClearState();
+
+        // Generate arrWords
+        let totalSprite = Conf.GridColumn * Conf.GridRow;
+        for(var i=0; i < (totalSprite/2) ; i++){
+            let index = Math.floor(Math.random() * Global.words.length )
+            Global.arrWord.push( new StructSprite(Global.TypeImg, index) )
+            Global.arrWord.push( new StructSprite(Global.TypeTxt, index) )
+        }
+        Global.arrWord.sort(function(){
+            return Math.random() - 0.5
+        });
+
+        // draw ani、txt or img sprite
+        for(var index=0; index < Global.arrGrid.length; index++){
+
+            let gridW = Global.arrGrid[index].width;
+            let gridH = Global.arrGrid[index].height;
+            let gridX = Global.arrGrid[index].x;
+            let gridY = Global.arrGrid[index].y;
+
+            // container
+            let ani = new PIXI.Container()
+            ani['_x_index'] = index
+            ani.interactive = true
+            ani.buttonMode = true
+
+            // background
+            let bg = new PIXI.Graphics();
+            bg.beginFill(0x8e8e8e);
+            bg.drawRoundedRect(0, 0, gridW - 8, gridH-8, 8 )
+            bg.endFill()
+            bg.x = gridX + 4
+            bg.y = gridY + 4
+            ani.addChild(bg)
+            
+            // txt or img sprite
+            let sprite = MakeSprite(index, bg.x, bg.y, gridW-8, gridH-8);
+            ani.addChild(sprite)
+            
+            // click or tap event
+            let func = function(event) {
+
+                // cancel select
+                for(var t=0; t<Global.arrSelect.length; t++){
+                    if( Global.arrSelect[t] == ani['_x_index'] ){
+                        Global.arrSelect.splice(t, 1)
+                        ani.filters = [];
+                        if(Global.arrSelect.length>0){
+                            Global.arrConteiner[ Global.arrSelect[0] ].filters = [Global.filterLine]
+                        }
+                        return
+                    }
+                }
+
+                // check lenght
+                if( Global.arrSelect.length >= 2 ){
+                    return;
+                }
+
+                Global.arrSelect.push(ani['_x_index'])
+                ani.filters = [Global.filterLine]
+
+                // winner
+                chkWinner();
+            }
+            // click or touch event
+            if( isTouchDevice() ){
+                ani.tap = func
+            }else{
+                ani.click = func
+            }
+            
+            Global.arrConteiner.push(ani)
+
+            app.stage.addChild(ani)
+
+        }
+
+        
+    }
+
+    function MakeSprite(arrWordIndex, bgX, bgY, bgW, bgH){
+
+        let padding = 2;
+        let maxW = bgW - padding*2; // sprite max width
+        let maxH = bgH - padding*2; // sprite max height
+
+        SetWordWrapWidth(maxW);
+
+        this.makeTextSprite = (baseIndex) => {
+            let text = Global.words[baseIndex].text;
+            let sprite = new PIXI.Text(text, Global.styleText)
+            
+            let xOffset = 0
+            let perLineChar = Math.floor(maxW/(Global.CharWeight+1))
+
+            if( text.length <= perLineChar ){
+                xOffset = Math.floor((maxW - text.length*(Global.CharWeight+1))/2)
+            }
+
+            let lineNum = Math.ceil( text.length/perLineChar );
+            let lineHeight = lineNum * Global.CharHeight;
+
+            sprite.x = bgX + padding + xOffset;
+            sprite.y = bgY + padding + (maxH - lineHeight)/2;
+            
+            return sprite;
+        }
+        
+        this.makeImageSprite = (baseIndex) => {
+
+            let filename = Global.words[baseIndex].filename;
+
+            let sprite = new PIXI.Sprite(
+                TC[filename]
+            );
+
+            let w = Global.words[baseIndex].width;
+            let h = Global.words[baseIndex].height;
+
+            if( w > maxW ){
+                h = h * maxW / w;
+                w = maxW;
+            }
+
+            if( h > maxH ){
+                w = w * maxH / h;
+                h = maxH;
+            }
+
+            sprite.width = w;
+            sprite.height = h;
+
+            let offsetX = 0;
+            if( w < maxW){
+                offsetX = (maxW-w)/2
+            }
+
+            let offsetY = 0;
+            if( h < maxH){
+                offsetY = (maxH-h)/2
+            }
+
+            sprite.x = bgX + padding + offsetX;
+            sprite.y = bgY + padding + offsetY;
+
+            return sprite;
+        }
+
+        if( Global.arrWord[arrWordIndex].type == Global.TypeTxt ){
+            return this.makeTextSprite( Global.arrWord[arrWordIndex].index)
+        }else{
+            return this.makeImageSprite( Global.arrWord[arrWordIndex].index )
+        }
+
+    }
+    
+
+    function chkWinner(){
+        //console.log(arrSelect.length)
+        if(Global.arrSelect.length < 2){
+            SoundJump();
+            return
+        }
+
+        if(Global.arrWord[ Global.arrSelect[0] ].index === Global.arrWord[ Global.arrSelect[1] ].index){
+
+            SoundChime();
+
+            let sprite1 = Global.arrConteiner[Global.arrSelect[0]].children[0]
+            let sprite2 = Global.arrConteiner[Global.arrSelect[1]].children[0]
+
+            ShowStars(sprite1.x+sprite1.width/2, sprite1.y+sprite1.height/2)
+            ShowStars(sprite2.x+sprite2.width/2, sprite2.y+sprite2.height/2)
+
+            Global.arrConteiner[ Global.arrSelect[0] ].visible = false;
+            Global.arrConteiner[ Global.arrSelect[1] ].visible = false;
+
+            Global.arrSelect = [];
+        }else{
+            SoundExplosion()
+            Global.arrConteiner[ Global.arrSelect[0] ].filters = [Global.filterLineErr]
+            Global.arrConteiner[ Global.arrSelect[1] ].filters = [Global.filterLineErr]
+        }
+
+    }
+
+    // stars
+    function ShowStars(x, y)
+    {
+        const _container = new PIXI.Container();
+        app.stage.addChild(_container);
+        let stars = d.create(
+            x,
+            y,
+            () => new PIXI.Sprite(
+                TC[starFile]
+            ),
+            _container,
+            150,
+            0,//重力
+            false,//随机间隔
+            0, 6.28,//最小/最大角度
+            30,90,//最小/最大尺寸
+            1,3//最小/最大速度
+        );
+        LoopTimer(function(){
+            d.update();
+        }, 10, 1000, function(){
+            app.stage.removeChild(_container)
+        });
+
+    }
+
+    function SoundJump(){
+        soundEffect(
+            523.25,       //frequency
+            0.05,         //attack
+            0.2,          //decay
+            "sine",       //waveform
+            3,            //volume
+            0.8,          //pan
+            0,            //wait before playing
+            600,          //pitch bend amount
+            true,         //reverse
+            100,          //random pitch range
+            0,            //dissonance
+            undefined,    //echo array: [delay, feedback, filter]
+            undefined     //reverb array: [duration, decay, reverse?]
+        );
+    }
+
+    function SoundExplosion(){
+        soundEffect(
+            16,          //frequency
+            0,           //attack
+            1,           //decay
+            "sawtooth",  //waveform
+            1,           //volume
+            0,           //pan
+            0,           //wait before playing
+            0,           //pitch bend amount
+            false,       //reverse
+            0,           //random pitch range
+            50,          //dissonance
+            undefined,   //echo array: [delay, feedback, filter]
+            undefined    //reverb array: [duration, decay, reverse?]
+        );
+    }
+
+    function SoundChime(){
+        if(FlagSound){
+            sounds[mp3File].play()
+        }
+    }
+
+</script>
